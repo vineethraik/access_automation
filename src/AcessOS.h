@@ -4,11 +4,10 @@
 #include <WiFiServer.h>
 #include <WebSockets.h>
 #include <EEPROM.h>
+#include <HTTPClient.h>
 
 struct Store
 {
-
-    
     uint8_t time_counter[64];
     bool modelMap[64];
 };
@@ -34,9 +33,14 @@ private:
     void initMemory();
     void initWiFi();
     void initGPIO();
+    void handleButton(int, bool *, int *, int, int);
+    void handleButtons();
+    void clearTemplates();
 
 public:
     int osState = OS_STATE_IDLE;
+    bool button_0 = false;
+    int button_0_press_count = 0;
     void init();
     void handle();
     void FPdeviceInfo();
@@ -63,6 +67,19 @@ void AccessOS::initWiFi()
 
     Serial.print("SSID: " + String(WIFI_SSID) + " Password: " + String(WIFI_PASSWORD));
 }
+
+void AccessOS::clearTemplates()
+{
+    fp.emptyDatabase();
+    templateStr = "";
+    templateId = -1;
+    for (size_t i = 0; i < sizeof(store.time_counter) / sizeof(store.time_counter[0]); i++)
+    {
+        store.time_counter[i] = 0;
+        store.modelMap[i] = false;
+    }
+    writeMemory();
+};
 
 void AccessOS::readMemory()
 {
@@ -130,8 +147,47 @@ void AccessOS::initFP()
         } // Don't proceed if sensor not found
     }
 }
+
+void AccessOS::handleButton(int pin, bool *state, int *counter, int debounceTime = 50, int pressCountDetachTime = 1000)
+{
+    bool button_0_state = !digitalRead(pin);
+    unsigned int now = millis();
+    static unsigned int past_0 = millis();
+    static unsigned int press_count_0_past = millis();
+    static int press_count_0 = 0;
+
+    if (button_0_state != (*state))
+    {
+        if (now - past_0 > debounceTime)
+        {
+            past_0 = millis();
+            if ((*state) == false)
+            {
+                press_count_0++;
+                press_count_0_past = millis();
+            }
+            (*state) = button_0_state;
+        }
+    }
+    else
+    {
+        past_0 = millis();
+    }
+    if (millis() - press_count_0_past > pressCountDetachTime)
+    {
+        (*counter) = press_count_0;
+        press_count_0 = 0;
+    }
+};
+
+void AccessOS::handleButtons()
+{
+    handleButton(0, &accessOS.button_0, &accessOS.button_0_press_count);
+}
+
 void AccessOS::handle()
 {
+    handleButtons();
     uint8_t p = fp.getImage();
     switch (p)
     {
@@ -198,9 +254,10 @@ void AccessOS::handle()
 
 void AccessOS::FPdeviceInfo()
 {
-    Serial.print("Capacity");
+    Serial.print("Capacity:");
     Serial.println(fp.capacity);
-    Serial.print("Template count");
+    Serial.print("Template count:");
+    fp.getTemplateCount();
     Serial.println(fp.templateCount);
 }
 
@@ -208,7 +265,6 @@ void AccessOS::registerNewID()
 {
     osState = OS_STATE_REGISTER;
     static bool runLED = true;
-    pinMode(LED_BUILTIN, OUTPUT);
     Serial.println("Registering new ID");
 
     // start led blinking event (unchanged)
