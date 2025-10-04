@@ -24,15 +24,36 @@ private:
     void writeMemory();
     void initFP();
     void initMemory();
+    void initWiFi();
+    void initGPIO();
 
 public:
     void init();
     void handle();
     void FPdeviceInfo();
     void registerNewID();
-    void clearTemplateData(){templateStr = "";templateId = -1;};
+    void clearTemplateData()
+    {
+        templateStr = "";
+        templateId = -1;
+    };
 
 } accessOS;
+
+void AccessOS::initWiFi()
+{
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.softAP(AP_SSID, AP_PASSWORD);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    Serial.print("Connecting to WiFi....");
+    while (WiFi.status() != WL_CONNECTED)
+    {
+        timer.delay(100);
+        Serial.print(".");
+    }
+
+    Serial.print("SSID: " + String(WIFI_SSID) + " Password: " + String(WIFI_PASSWORD));
+}
 
 void AccessOS::readMemory()
 {
@@ -64,16 +85,27 @@ void AccessOS::init()
 {
     initFP();
     initMemory();
+    initWiFi();
+    initGPIO();
+
+    // clearTemplates();
 }
 
+void AccessOS::initGPIO()
+{
+    pinMode(LED_BUILTIN, OUTPUT);
+    pinMode(0, INPUT);
+}
 void AccessOS::initMemory()
 {
     EEPROM.begin(2048);
     accessOS.readMemory();
 }
 
-void AccessOS::initFP() {
+void AccessOS::initFP()
+{
     fp.begin(57600);
+    // fp.LEDcontrol(FINGERPRINT_LED_OFF);
     templateStr.reserve(1024);
     // fp.emptyDatabase();
     if (fp.verifyPassword())
