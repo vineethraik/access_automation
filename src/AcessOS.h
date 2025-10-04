@@ -13,6 +13,14 @@ struct Store
     bool modelMap[64];
 };
 
+enum OS_STATE
+{
+    OS_STATE_IDLE = 0,
+    OS_STATE_ENROLL = 1,
+    OS_STATE_VERIFY = 2,
+    OS_STATE_REGISTER = 3
+};
+
 class AccessOS
 {
 private:
@@ -28,6 +36,7 @@ private:
     void initGPIO();
 
 public:
+    int osState = OS_STATE_IDLE;
     void init();
     void handle();
     void FPdeviceInfo();
@@ -197,54 +206,124 @@ void AccessOS::FPdeviceInfo()
 
 void AccessOS::registerNewID()
 {
+    osState = OS_STATE_REGISTER;
     static bool runLED = true;
     pinMode(LED_BUILTIN, OUTPUT);
     Serial.println("Registering new ID");
-    timer.set_new_event(0,50, []() {
-        static bool ledState = false;
-        ledState = !ledState;
-        digitalWrite(LED_BUILTIN, runLED?ledState:false);
 
-        return runLED;
-    });
+    // start led blinking event (unchanged)
+    timer.set_new_event(0, 50, []()
+                        {
+    static bool ledState = false;
+    ledState = !ledState;
+    digitalWrite(LED_BUILTIN, runLED ? ledState : false);
+    return runLED; });
+
+    int maxSlots = 64;
+    int captureSlot = 0;
+    int newTemplateId = -1;
+    int failCount = 0;
+    int failLimit = 100;
+
+    captureSlot = 0;
     while (true)
     {
-        timer.delay(1000);
-        uint8_t p = fp.getImage();
-        if (p != FINGERPRINT_OK)
-            continue;
-        p = fp.image2Tz(1);
-        if (p != FINGERPRINT_OK)
-            continue;   
-        p = fp.fingerFastSearch();
-        if (p == FINGERPRINT_OK)
-           {Serial.println("Found a print match!, no new ID"+String(fp.fingerID)+":"+String(fp.confidence)); continue;}else{
-            templateId=1;
-           }
-        // templateId = fp.fingerID;
-        if(templateId!=-1){
-            int index =63;
-            while(true){
-                if(store.modelMap[index]==false){
-                    store.modelMap[index]=true;
-                    store.time_counter[index] = 1;
-                    writeMemory();
-                    break;
-                }
-                index--;
-            }
-            fp.loadModel(templateId);
-            fp.storeModel(index);
-            templateId=-1;
-           break; 
-        }else if(templateId==-2){
-
+        // Serial.printf("Capturing slot: %d , Fail count: %d\n", captureSlot, failCount);
+        // captureSlot = fp.getTemplateCount();
+        failCount++;
+        if (failCount > failLimit)
+        {
+            Serial.println("Failed to register");
+            return;
         }
-        
-    }
-    
-    Serial.println("done with delay");
+        timer.delay(1000);
+        uint8_t res = fp.getImage();
+        if (res != FINGERPRINT_OK)
+            continue;
+        res = fp.image2Tz((captureSlot % 2) + 1);
+        if (res != FINGERPRINT_OK)
+            continue;
+        res = fp.fingerFastSearch();
+        if (res == FINGERPRINT_OK)
+        {
+            if ((fp.fingerID != 1) && (fp.fingerID != 2) && (fp.fingerID != 3) && (fp.fingerID != 4))
+            {
+                Serial.println("Found a print match, not  a new credential, returning to idle");
 
+                osState = OS_STATE_IDLE;
+                runLED = false;
+                return;
+            }
+        }
+
+        if (captureSlot == 1 || captureSlot == 3)
+        {
+            Serial.println("captures is 1 or 3");
+
+            res = fp.createModel();
+            if (res != FINGERPRINT_OK)
+            {
+                Serial.println("Error creating model");
+                captureSlot = 0;
+                continue;
+            }
+            fp.storeModel(captureSlot == 1 ? 3 : 4);
+        }
+        if (captureSlot == 3)
+        {
+            Serial.println("captures is  3");
+
+            fp.loadModel(3);
+            fp.storeModel(1);
+            fp.loadModel(4);
+            fp.storeModel(2);
+            res = fp.createModel();
+            if (res != FINGERPRINT_OK)
+            {
+                Serial.println("Error creating model");
+                captureSlot = 0;
+                continue;
+            }
+            fp.storeModel(1);
+            newTemplateId = 1;
+        }
+
+        if (newTemplateId == 1)
+        {
+            Serial.println("template is 1");
+
+            for (size_t i = 0; i < maxSlots - 4; i++)
+            {
+                if (store.modelMap[maxSlots - i] == false)
+                {
+                    store.modelMap[maxSlots - i] = true;
+                    store.time_counter[maxSlots - i] = 1;
+                    newTemplateId = maxSlots - i;
+                    fp.storeModel(newTemplateId);
+                    Serial.print("Registered new ID: ");
+                    Serial.println(newTemplateId);
+                    newTemplateId = -1;
+                    Serial.println("done with registration");
+                    runLED = false;
+                    fp.deleteModel(1);
+                    fp.deleteModel(2);
+                    fp.deleteModel(3);
+                    fp.deleteModel(4);
+                    writeMemory();
+
+                    osState = OS_STATE_IDLE;
+                    return;
+                }
+            }
+        }
+        Serial.printf("Capturing slot: %d , Fail count: %d\n", captureSlot, failCount);
+
+        failCount--;
+        captureSlot++;
+    }
+
+    Serial.println("done with registration");
     runLED = false;
 
+    osState = OS_STATE_IDLE;
 }
