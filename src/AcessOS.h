@@ -162,11 +162,29 @@ void AccessOS::handle()
         Serial.println("Could not find fingerprint features");
         return;
     default:
-        Serial.println("Unknown error");}
+        Serial.println("Unknown error");
+    }
 
-
-    
-
+    p = fp.fingerFastSearch();
+    if (p == FINGERPRINT_OK)
+    {
+        Serial.printf("Found a print match at slot #%d!\n", fp.fingerID);
+    }
+    else if (p == FINGERPRINT_PACKETRECIEVEERR)
+    {
+        Serial.println("Communication error");
+        return;
+    }
+    else if (p == FINGERPRINT_NOTFOUND)
+    {
+        Serial.println("Did not find a match");
+        return;
+    }
+    else
+    {
+        Serial.println("Unknown error");
+        return;
+    }
 }
 
 void AccessOS::FPdeviceInfo()
