@@ -35,7 +35,6 @@ private:
     void initGPIO();
     void handleButton(int, bool *, int *, int, int);
     void handleButtons();
-    void clearTemplates();
 
 public:
     int osState = OS_STATE_IDLE;
@@ -45,6 +44,7 @@ public:
     void handle();
     void FPdeviceInfo();
     void registerNewID();
+    void clearTemplates();
     void clearTemplateData()
     {
         templateStr = "";
@@ -70,7 +70,16 @@ void AccessOS::initWiFi()
 
 void AccessOS::clearTemplates()
 {
-    fp.emptyDatabase();
+    uint8_t code=fp.emptyDatabase();
+    if (code == FINGERPRINT_OK)
+    {
+        Serial.println("Database cleared");
+    }
+    else
+    {
+        Serial.println("Database clear failed");
+    }
+
     templateStr = "";
     templateId = -1;
     for (size_t i = 0; i < sizeof(store.time_counter) / sizeof(store.time_counter[0]); i++)
