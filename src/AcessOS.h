@@ -5,6 +5,7 @@
 #include <WebSockets.h>
 #include <EEPROM.h>
 #include <HTTPClient.h>
+#include "htmlData.h"
 
 struct Store
 {
@@ -27,6 +28,7 @@ private:
     String templateStr;
     int templateId = -1;
     Store store;
+    WebServer server;
     void readMemory();
     void writeMemory();
     void initFP();
@@ -122,6 +124,7 @@ void AccessOS::init()
     initMemory();
     initWiFi();
     initGPIO();
+    initWeb();
 
     // clearTemplates();
 }
@@ -197,6 +200,7 @@ void AccessOS::handleButtons()
 void AccessOS::handle()
 {
     handleButtons();
+    handleWebServer();
     uint8_t p = fp.getImage();
     switch (p)
     {
@@ -391,4 +395,23 @@ void AccessOS::registerNewID()
     runLED = false;
 
     osState = OS_STATE_IDLE;
+}
+
+// web server methods
+void AccessOS::initWeb()
+{
+    
+    
+    server.begin(80);
+    server.onNotFound([this](){server.sendHeader("Location", "/", true);});
+    server.on("/", [this]()
+              { server.send(200, "text/html", indexHTML); });
+    server.on("*", [this]()
+              { server.send(200, "text/plain", "No things here"); });
+}
+
+void AccessOS::handleWebServer()
+{
+   
+    server.handleClient();
 }

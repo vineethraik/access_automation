@@ -1,9 +1,9 @@
+#ifndef ARDUINO_H
 #include <Arduino.h>
-#include <vector>
-
+#include <DNSServer.h>
+#define ARDUINO_H
+#endif
 using namespace std;
-#include "credentials.h"
-#include "timer.h"
 #include "AcessOS.h"
 
 void setup()

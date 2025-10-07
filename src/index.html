@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AccessOS Mobile</title>
+    <style>
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f4f4f4;
+    color: #333;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+}
+
+#app {
+    background-color: #fff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    width: 100%;
+    max-width: 400px;
+    box-sizing: border-box;
+}
+
+h1, h2 {
+    color: #0056b3;
+    text-align: center;
+}
+
+button {
+    background-color: #007bff;
+    color: white;
+    padding: 10px 15px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    width: 100%;
+    margin-bottom: 10px;
+}
+
+button:hover {
+    background-color: #0056b3;
+}
+
+input[type="text"], input[type="password"] {
+    width: calc(100% - 20px);
+    padding: 10px;
+    margin-bottom: 10px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    box-sizing: border-box;
+}
+
+.page {
+    display: none; /* Hidden by default, shown by JS */
+}
+
+.page.active {
+    display: block;
+}
+
+.loading-animation {
+    display: none;
+    text-align: center;
+    margin-top: 20px;
+}
+
+.loading-animation.active {
+    display: block;
+}
+
+.spinner {
+    border: 4px solid rgba(0, 0, 0, 0.1);
+    border-left-color: #007bff;
+    border-radius: 50%;
+    width: 30px;
+    height: 30px;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 10px auto;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.message {
+    text-align: center;
+    margin-top: 10px;
+    font-weight: bold;
+}
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- Pages will be dynamically loaded here by JavaScript -->
+    </div>
+
+    <script>
+const app = document.getElementById('app');
+let ws;
+let deviceId;
+
+// --- Constants and Enums ---
+const ENUM_MESSAGE_TYPES = {
+    DEVICE_CONNECT: "DEVICE_CONNECT",
+    REGISTER_FINGERPRINT: "REGISTER_FINGERPRINT",
+    REGISTER_PROGRESS: "REGISTER_PROGRESS",
+    LOGIN_FINGERPRINT: "LOGIN_FINGERPRINT",
+    LOGIN_SUCCESS: "LOGIN_SUCCESS",
+    LOGIN_FAILED: "LOGIN_FAILED"
+};
+
+const CONST_STRINGS = {
+    DEVICE_ID_KEY: 'deviceId',
+    PAGE_ACTIVE_CLASS: 'active',
+    WS_PORT: 81,
+    WS_NOT_CONNECTED: "WebSocket is not connected.",
+    WS_CONNECTED: "WebSocket connected.",
+    WS_DISCONNECTED: "WebSocket disconnected. Attempting to reconnect in 5 seconds...",
+    WS_ERROR: "WebSocket error:",
+    UNKNOWN_MESSAGE_TYPE: "Unknown message type:",
+    REGISTER_COMPLETED: "completed",
+    LOGIN_SUCCESSFUL: "Login Successful!",
+    LOGIN_FAILED_MSG: "Login Failed. Please try again.",
+    ENTER_USN_NAME_ALERT: "Please enter both USN and Name.",
+    INITIATING_REGISTRATION: "Initiating registration...",
+    ATTEMPTING_LOGIN: "Attempting login..."
+};
+
+// --- Utility Functions ---
+function generateDeviceId() {
+    let id = localStorage.getItem(CONST_STRINGS.DEVICE_ID_KEY);
+    if (!id) {
+        id = 'device-' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem(CONST_STRINGS.DEVICE_ID_KEY, id);
+    }
+    return id;
+}
+
+function showPage(pageId) {
+    document.querySelectorAll('.page').forEach(page => {
+        page.classList.remove(CONST_STRINGS.PAGE_ACTIVE_CLASS);
+    });
+    document.getElementById(pageId).classList.add(CONST_STRINGS.PAGE_ACTIVE_CLASS);
+}
+
+function sendMessage(type, payload = {}) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        const message = {
+            deviceId: deviceId,
+            type: type,
+            payload: payload
+        };
+        ws.send(JSON.stringify(message));
+    } else {
+        console.error(CONST_STRINGS.WS_NOT_CONNECTED);
+        // Optionally, try to reconnect or queue messages
+    }
+}
+
+// --- WebSocket Initialization ---
+function initWebSocket() {
+    const host = window.location.hostname;
+    const port = CONST_STRINGS.WS_PORT; // WebSocket port
+    ws = new WebSocket(`ws://${host}:${port}`);
+
+    ws.onopen = () => {
+        console.log(CONST_STRINGS.WS_CONNECTED);
+        // Send initial device ID or status
+        sendMessage(ENUM_MESSAGE_TYPES.DEVICE_CONNECT);
+    };
+
+    ws.onmessage = (event) => {
+        const message = JSON.parse(event.data);
+        console.log("Message from server:", message);
+        handleWebSocketMessage(message);
+    };
+
+    ws.onclose = () => {
+        console.log(CONST_STRINGS.WS_DISCONNECTED);
+        setTimeout(initWebSocket, 5000);
+    };
+
+    ws.onerror = (error) => {
+        console.error(CONST_STRINGS.WS_ERROR, error);
+        ws.close();
+    };
+}
+
+function handleWebSocketMessage(message) {
+    switch (message.type) {
+        case ENUM_MESSAGE_TYPES.REGISTER_PROGRESS:
+            updateLoadingMessage(message.payload.status);
+            if (message.payload.status === CONST_STRINGS.REGISTER_COMPLETED) {
+                setTimeout(() => showPage('page3'), 1000); // Go to login page after registration
+            }
+            break;
+        case ENUM_MESSAGE_TYPES.LOGIN_SUCCESS:
+            document.getElementById('loggedInUSN').textContent = message.payload.usn;
+            document.getElementById('loggedInName').textContent = message.payload.name;
+            document.getElementById('loginStatus').textContent = CONST_STRINGS.LOGIN_SUCCESSFUL;
+            break;
+        case ENUM_MESSAGE_TYPES.LOGIN_FAILED:
+            document.getElementById('loginStatus').textContent = CONST_STRINGS.LOGIN_FAILED_MSG;
+            break;
+        default:
+            console.log(CONST_STRINGS.UNKNOWN_MESSAGE_TYPE, message.type);
+    }
+}
+
+// --- Page Rendering Functions ---
+function renderPage1() {
+    app.innerHTML = `
+        <div id="page1" class="page ${CONST_STRINGS.PAGE_ACTIVE_CLASS}">
+            <h2>Welcome to AccessOS</h2>
+            <button id="loginBtn">Login</button>
+            <button id="registerBtn">Register</button>
+        </div>
+    `;
+    document.getElementById('loginBtn').addEventListener('click', () => showPage('page3'));
+    document.getElementById('registerBtn').addEventListener('click', () => showPage('page2'));
+}
+
+function renderPage2() {
+    app.innerHTML = `
+        <div id="page2" class="page ${CONST_STRINGS.PAGE_ACTIVE_CLASS}">
+            <h2>Register New Fingerprint</h2>
+            <input type="text" id="usnInput" placeholder="Enter USN">
+            <input type="text" id="nameInput" placeholder="Enter Name">
+            <button id="submitRegisterBtn">Register Fingerprint</button>
+            <div id="loadingAnimation" class="loading-animation">
+                <div class="spinner"></div>
+                <p id="loadingMessage">Waiting for fingerprint...</p>
+            </div>
+            <button id="backToPage1Btn">Back</button>
+        </div>
+    `;
+    document.getElementById('submitRegisterBtn').addEventListener('click', handleRegister);
+    document.getElementById('backToPage1Btn').addEventListener('click', () => showPage('page1'));
+}
+
+function renderPage3() {
+    app.innerHTML = `
+        <div id="page3" class="page ${CONST_STRINGS.PAGE_ACTIVE_CLASS}">
+            <h2>Login</h2>
+            <button id="loginFingerprintBtn">Login with Fingerprint</button>
+            <p id="loginStatus" class="message"></p>
+            <div id="loggedInInfo" style="display:none;">
+                <p>USN: <span id="loggedInUSN"></span></p>
+                <p>Name: <span id="loggedInName"></span></p>
+            </div>
+            <button id="backToPage1Btn">Back</button>
+        </div>
+    `;
+    document.getElementById('loginFingerprintBtn').addEventListener('click', handleLogin);
+    document.getElementById('backToPage1Btn').addEventListener('click', () => showPage('page1'));
+}
+
+// --- Event Handlers ---
+function handleRegister() {
+    const usn = document.getElementById('usnInput').value;
+    const name = document.getElementById('nameInput').value;
+
+    if (!usn || !name) {
+        alert(CONST_STRINGS.ENTER_USN_NAME_ALERT);
+        return;
+    }
+
+    document.getElementById('loadingAnimation').classList.add(CONST_STRINGS.PAGE_ACTIVE_CLASS);
+    updateLoadingMessage(CONST_STRINGS.INITIATING_REGISTRATION);
+    sendMessage(ENUM_MESSAGE_TYPES.REGISTER_FINGERPRINT, { usn: usn, name: name });
+}
+
+function updateLoadingMessage(message) {
+    document.getElementById('loadingMessage').textContent = message;
+}
+
+function handleLogin() {
+    document.getElementById('loginStatus').textContent = CONST_STRINGS.ATTEMPTING_LOGIN;
+    document.getElementById('loggedInInfo').style.display = 'none';
+    sendMessage(ENUM_MESSAGE_TYPES.LOGIN_FINGERPRINT);
+}
+
+// --- Initial Setup ---
+document.addEventListener('DOMContentLoaded', () => {
+    deviceId = generateDeviceId();
+    console.log("Device ID:", deviceId);
+    initWebSocket();
+    renderPage1(); // Start with Page 1
+});
+    </script>
+</body>
+</html>
