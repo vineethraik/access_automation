@@ -1,8 +1,7 @@
 #include <vector>
-// #include <functional>
-// typedef function<bool(void)> timer_function_t;
-using timer_function_t = bool (*)();
-using timer_loop_function_t = void (*)();
+#include <functional>
+using timer_function_t = std::function<bool()>;
+using timer_loop_function_t = std::function<void()>;
 
 struct TIMER_UNIT
 {

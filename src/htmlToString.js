@@ -1,9 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const htmlFiles = [
-  { name: "indexHTML", path: "index.html" },
-];
+const htmlFiles = [{ name: "indexHTML", path: "index.html" }];
 
 const outputFilePath = path.join(__dirname, "htmlData.h");
 
@@ -16,6 +14,7 @@ htmlFiles.forEach((file) => {
 
     // Escape double quotes and newlines for C-style string
     const escapedHtml = data
+      .replace(/\\/g, "\\\\") // Escape double quotes
       .replace(/"/g, '\\"') // Escape double quotes
       .replace(/\n/g, "\\n") // Escape newlines
       .replace(/\r/g, "") // Remove carriage returns
@@ -28,7 +27,6 @@ htmlFiles.forEach((file) => {
     console.error(`Error processing ${file.path}:`, err);
   }
 });
-
 
 try {
   fs.writeFileSync(outputFilePath, outputContent, "utf8");

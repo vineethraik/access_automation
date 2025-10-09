@@ -2,15 +2,24 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <WiFiServer.h>
-#include <WebSockets.h>
+#include <WebSocketsServer.h>
 #include <EEPROM.h>
 #include <HTTPClient.h>
+#include <vector>
+#include <functional>
+#include <ArduinoJson.h>
 #include "htmlData.h"
+#include "credentials.h"
+#include "timer.h"
+
+#define SOCKET_SERVER_PORT 81
 
 struct Store
 {
     uint8_t time_counter[64];
     bool modelMap[64];
+    String data;
+
 };
 
 enum OS_STATE
@@ -29,14 +38,21 @@ private:
     int templateId = -1;
     Store store;
     WebServer server;
+    WebSocketsServer socketServer = WebSocketsServer(SOCKET_SERVER_PORT);
+    DNSServer DNS;
+    // server methods
     void readMemory();
     void writeMemory();
     void initFP();
     void initMemory();
     void initWiFi();
+    void initWeb();
+    void initSockets();
     void initGPIO();
     void handleButton(int, bool *, int *, int, int);
     void handleButtons();
+    void handleWebServer();
+    void handleWebSockets();
 
 public:
     int osState = OS_STATE_IDLE;
@@ -45,7 +61,8 @@ public:
     void init();
     void handle();
     void FPdeviceInfo();
-    void registerNewID();
+    void registerNewID(function<void(String)>);
+    // void registerNewID( function<void(int)> );
     void clearTemplates();
     void clearTemplateData()
     {
@@ -72,7 +89,7 @@ void AccessOS::initWiFi()
 
 void AccessOS::clearTemplates()
 {
-    uint8_t code=fp.emptyDatabase();
+    uint8_t code = fp.emptyDatabase();
     if (code == FINGERPRINT_OK)
     {
         Serial.println("Database cleared");
@@ -94,7 +111,7 @@ void AccessOS::clearTemplates()
 
 void AccessOS::readMemory()
 {
-    if (EEPROM.read(0) == 109)
+    if (EEPROM.read(0) == 108)
     {
         EEPROM.get(10, store);
     }
@@ -106,8 +123,9 @@ void AccessOS::readMemory()
             store.time_counter[i] = 0;
             store.modelMap[i] = false;
         }
+        
         EEPROM.put(10, store);
-        EEPROM.write(0, 109);
+        EEPROM.write(0, 108);
         EEPROM.commit();
         // delay(1000);
     }
@@ -118,6 +136,7 @@ void AccessOS::writeMemory()
     EEPROM.put(10, store);
     EEPROM.commit();
 }
+
 void AccessOS::init()
 {
     initFP();
@@ -125,6 +144,40 @@ void AccessOS::init()
     initWiFi();
     initGPIO();
     initWeb();
+    initSockets();
+
+    JsonDocument doc;
+    String test = "";
+
+    JsonArray dataArray = doc["data"].to<JsonArray>();
+
+    JsonObject obj1 = dataArray.add<JsonObject>();
+    obj1["name"] = "1234567890123456789012345";
+    obj1["usn"] = "4sf18ec124";
+    obj1["FID"] = 64;
+
+    JsonObject obj2 = dataArray.add<JsonObject>();
+    obj2["name"] = "1234567890123456789012346";
+    obj2["usn"] = "4sf18ec056";
+    obj2["FID"] = 63;
+
+    serializeJson(doc, test);
+    Serial.println("JSON Document with array of objects:");
+    Serial.println(test);
+    Serial.println("Length of JSON string: " + String(test.length()));
+
+    // Test searching the array for a specific key
+    Serial.println("\nSearching for FID 64 in the array:");
+    for (JsonObject obj : dataArray) {
+        if (obj["FID"] == 64) {
+            Serial.println("Found FID 64!");
+            Serial.print("Details: ");
+            String foundData;
+            serializeJson(obj, foundData);
+            Serial.println(foundData);
+            break;
+        }
+    }
 
     // clearTemplates();
 }
@@ -134,9 +187,11 @@ void AccessOS::initGPIO()
     pinMode(LED_BUILTIN, OUTPUT);
     pinMode(0, INPUT);
 }
+
 void AccessOS::initMemory()
 {
-    EEPROM.begin(2048);
+    store.data.reserve(5120);
+    EEPROM.begin(6144);
     accessOS.readMemory();
 }
 
@@ -201,6 +256,7 @@ void AccessOS::handle()
 {
     handleButtons();
     handleWebServer();
+    handleWebSockets();
     uint8_t p = fp.getImage();
     switch (p)
     {
@@ -274,14 +330,23 @@ void AccessOS::FPdeviceInfo()
     Serial.println(fp.templateCount);
 }
 
-void AccessOS::registerNewID()
+void AccessOS::registerNewID(function<void(String)> _updateFuction = nullptr)
 {
+    auto updateFunction = [_updateFuction](int progress = 0, String status = "", String message = "", int templateId = -1)
+    {if(_updateFuction!=nullptr){JsonDocument res; res["progress"] = progress; res["status"] = status;
+            res["message"] = message;
+            String data;
+            serializeJson(res, data);
+            _updateFuction(data);
+        } };
+
     osState = OS_STATE_REGISTER;
     static bool runLED = true;
     Serial.println("Registering new ID");
+    updateFunction(0, "Registering new ID");
 
     // start led blinking event (unchanged)
-    timer.set_new_event(0, 50, []()
+    timer.set_new_event(0, 200, []()
                         {
     static bool ledState = false;
     ledState = !ledState;
@@ -325,6 +390,7 @@ void AccessOS::registerNewID()
             }
         }
 
+        updateFunction(captureSlot * 25, String((captureSlot+1) * 25) + "\% completed", "update function test");
         if (captureSlot == 1 || captureSlot == 3)
         {
             Serial.println("captures is 1 or 3");
@@ -371,6 +437,7 @@ void AccessOS::registerNewID()
                     fp.storeModel(newTemplateId);
                     Serial.print("Registered new ID: ");
                     Serial.println(newTemplateId);
+                    updateFunction(100, "completed", "update function test", newTemplateId);
                     newTemplateId = -1;
                     Serial.println("done with registration");
                     runLED = false;
@@ -381,6 +448,8 @@ void AccessOS::registerNewID()
                     writeMemory();
 
                     osState = OS_STATE_IDLE;
+                    runLED = false;
+
                     return;
                 }
             }
@@ -397,13 +466,16 @@ void AccessOS::registerNewID()
     osState = OS_STATE_IDLE;
 }
 
+// void AccessOS::registerNewID(function<void(int)> updateMethod){
+
+// }
 // web server methods
 void AccessOS::initWeb()
 {
-    
-    
+
     server.begin(80);
-    server.onNotFound([this](){server.sendHeader("Location", "/", true);});
+    server.onNotFound([this]()
+                      { server.sendHeader("Location", "/", true); });
     server.on("/", [this]()
               { server.send(200, "text/html", indexHTML); });
     server.on("*", [this]()
@@ -412,6 +484,62 @@ void AccessOS::initWeb()
 
 void AccessOS::handleWebServer()
 {
-   
     server.handleClient();
+}
+
+// web socket methods
+void AccessOS::initSockets()
+{
+    socketServer.begin();
+    socketServer.onEvent([this](uint8_t num, WStype_t type, uint8_t *payload, size_t length)
+                         {
+        switch (type)
+        {
+        case WStype_DISCONNECTED:
+            Serial.printf("[%u] Disconnected!\n", num);
+            break;
+        case WStype_CONNECTED:
+            {
+                IPAddress ip = socketServer.remoteIP(num);
+                Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\n", num, ip[0], ip[1], ip[2], ip[3], payload);
+            }
+            break;
+        case WStype_TEXT:
+            {
+                JsonDocument doc,res;
+                DeserializationError err = deserializeJson(doc, payload);
+                if (err)
+                {
+                    Serial.print(F("deserializeJson() failed: "));
+                    Serial.println(err.c_str());
+                    return;
+                }
+                String type = doc["type"];
+                Serial.println(type);
+                if (type == "REGISTER_FINGERPRINT"){
+                    registerNewID([this,num](String data){
+                        Serial.println(data);
+                        JsonDocument res,payload;
+                        deserializeJson(payload,data);
+                        res["type"] = "REGISTER_PROGRESS";
+                        res["payload"] = payload;
+                        String str;
+                        serializeJson(res,str);
+                        socketServer.sendTXT(num,str.c_str(),str.length());
+                    });
+                }else if(type == ""){
+
+                }
+            }
+
+            break;
+        case WStype_BIN:
+            Serial.printf("[%u] get binary length: %u\n", num, length);
+            break;
+        } });
+}
+
+void AccessOS::handleWebSockets()
+{
+    socketServer.loop();
 }
