@@ -18,8 +18,7 @@ struct Store
 {
     uint8_t time_counter[64];
     bool modelMap[64];
-    String data;
-
+    char data[4000];
 };
 
 enum OS_STATE
@@ -34,9 +33,9 @@ class AccessOS
 {
 private:
     Adafruit_Fingerprint fp = Adafruit_Fingerprint(&Serial2);
-    String templateStr;
     int templateId = -1;
     Store store;
+    JsonDocument dataList;
     WebServer server;
     WebSocketsServer socketServer = WebSocketsServer(SOCKET_SERVER_PORT);
     DNSServer DNS;
@@ -66,7 +65,6 @@ public:
     void clearTemplates();
     void clearTemplateData()
     {
-        templateStr = "";
         templateId = -1;
     };
 
@@ -99,12 +97,14 @@ void AccessOS::clearTemplates()
         Serial.println("Database clear failed");
     }
 
-    templateStr = "";
+    // templateStr = "";
     templateId = -1;
     for (size_t i = 0; i < sizeof(store.time_counter) / sizeof(store.time_counter[0]); i++)
     {
         store.time_counter[i] = 0;
         store.modelMap[i] = false;
+        strcpy(store.data, "{\"data\":[]}");
+        // store.data = "{\"data\":[]}";
     }
     writeMemory();
 };
@@ -114,6 +114,8 @@ void AccessOS::readMemory()
     if (EEPROM.read(0) == 108)
     {
         EEPROM.get(10, store);
+        deserializeJson(dataList, store.data);
+        Serial.println("store data:"+String(store.data));
     }
     else
     {
@@ -122,8 +124,10 @@ void AccessOS::readMemory()
         {
             store.time_counter[i] = 0;
             store.modelMap[i] = false;
+            strcpy(store.data, "{\"data\":[]}");
+            // store.data="{\"data\":[]}";
         }
-        
+
         EEPROM.put(10, store);
         EEPROM.write(0, 108);
         EEPROM.commit();
@@ -133,6 +137,9 @@ void AccessOS::readMemory()
 
 void AccessOS::writeMemory()
 {
+    // deserializeJson(data,store.data);
+    serializeJson(dataList, store.data);
+    // serializeJson(store.data, str);
     EEPROM.put(10, store);
     EEPROM.commit();
 }
@@ -146,39 +153,6 @@ void AccessOS::init()
     initWeb();
     initSockets();
 
-    JsonDocument doc;
-    String test = "";
-
-    JsonArray dataArray = doc["data"].to<JsonArray>();
-
-    JsonObject obj1 = dataArray.add<JsonObject>();
-    obj1["name"] = "1234567890123456789012345";
-    obj1["usn"] = "4sf18ec124";
-    obj1["FID"] = 64;
-
-    JsonObject obj2 = dataArray.add<JsonObject>();
-    obj2["name"] = "1234567890123456789012346";
-    obj2["usn"] = "4sf18ec056";
-    obj2["FID"] = 63;
-
-    serializeJson(doc, test);
-    Serial.println("JSON Document with array of objects:");
-    Serial.println(test);
-    Serial.println("Length of JSON string: " + String(test.length()));
-
-    // Test searching the array for a specific key
-    Serial.println("\nSearching for FID 64 in the array:");
-    for (JsonObject obj : dataArray) {
-        if (obj["FID"] == 64) {
-            Serial.println("Found FID 64!");
-            Serial.print("Details: ");
-            String foundData;
-            serializeJson(obj, foundData);
-            Serial.println(foundData);
-            break;
-        }
-    }
-
     // clearTemplates();
 }
 
@@ -190,8 +164,8 @@ void AccessOS::initGPIO()
 
 void AccessOS::initMemory()
 {
-    store.data.reserve(5120);
-    EEPROM.begin(6144);
+    // store.data.reserve(4000);
+    EEPROM.begin(4200);
     accessOS.readMemory();
 }
 
@@ -199,7 +173,6 @@ void AccessOS::initFP()
 {
     fp.begin(57600);
     // fp.LEDcontrol(FINGERPRINT_LED_OFF);
-    templateStr.reserve(1024);
     // fp.emptyDatabase();
     if (fp.verifyPassword())
     {
@@ -303,6 +276,23 @@ void AccessOS::handle()
     if (p == FINGERPRINT_OK)
     {
         Serial.printf("Found a print match at slot #%d!\n", fp.fingerID);
+        JsonArray arr = dataList["data"].as<JsonArray>();
+        JsonObject obj = arr[0].as<JsonObject>();
+        String test;
+        serializeJson(dataList, test);
+        // Serial.printf("test \"%s\"\nUSN:%d\n", test, (unsigned int)arr.size());
+
+        for (int i=0; i<arr.size(); i++)
+        {
+            JsonObject obj = arr[i].as<JsonObject>();
+
+            if (obj["FID"].as<int>() == fp.fingerID)
+            {
+                Serial.printf("Hello \"%s\"\n USN:%s\n", obj["name"].as<String>(), obj["usn"].as<String>());
+                return;
+            }
+            // Serial.printf("Hello \"%s\"\n USN:%s\n", obj["name"].as<String>(), obj["usn"].as<String>());
+        }
     }
     else if (p == FINGERPRINT_PACKETRECIEVEERR)
     {
@@ -335,6 +325,7 @@ void AccessOS::registerNewID(function<void(String)> _updateFuction = nullptr)
     auto updateFunction = [_updateFuction](int progress = 0, String status = "", String message = "", int templateId = -1)
     {if(_updateFuction!=nullptr){JsonDocument res; res["progress"] = progress; res["status"] = status;
             res["message"] = message;
+            res["FID"] = templateId;
             String data;
             serializeJson(res, data);
             _updateFuction(data);
@@ -390,7 +381,7 @@ void AccessOS::registerNewID(function<void(String)> _updateFuction = nullptr)
             }
         }
 
-        updateFunction(captureSlot * 25, String((captureSlot+1) * 25) + "\% completed", "update function test");
+        updateFunction(captureSlot * 25, String((captureSlot + 1) * 25) + "\% completed", "update function test");
         if (captureSlot == 1 || captureSlot == 3)
         {
             Serial.println("captures is 1 or 3");
@@ -437,8 +428,6 @@ void AccessOS::registerNewID(function<void(String)> _updateFuction = nullptr)
                     fp.storeModel(newTemplateId);
                     Serial.print("Registered new ID: ");
                     Serial.println(newTemplateId);
-                    updateFunction(100, "completed", "update function test", newTemplateId);
-                    newTemplateId = -1;
                     Serial.println("done with registration");
                     runLED = false;
                     fp.deleteModel(1);
@@ -446,6 +435,8 @@ void AccessOS::registerNewID(function<void(String)> _updateFuction = nullptr)
                     fp.deleteModel(3);
                     fp.deleteModel(4);
                     writeMemory();
+                    updateFunction(100, "completed", "update function test", newTemplateId);
+                    newTemplateId = -1;
 
                     osState = OS_STATE_IDLE;
                     runLED = false;
@@ -515,9 +506,14 @@ void AccessOS::initSockets()
                     return;
                 }
                 String type = doc["type"];
+                JsonObject payloadObj = doc["payload"].as<JsonObject>();
+                String usn = payloadObj["usn"];
+                String name = payloadObj["name"];
                 Serial.println(type);
+                // Serial.println(x);
                 if (type == "REGISTER_FINGERPRINT"){
-                    registerNewID([this,num](String data){
+                    registerNewID([this,name,usn , num,payloadObj](String data)
+                                  {
                         Serial.println(data);
                         JsonDocument res,payload;
                         deserializeJson(payload,data);
@@ -526,7 +522,18 @@ void AccessOS::initSockets()
                         String str;
                         serializeJson(res,str);
                         socketServer.sendTXT(num,str.c_str(),str.length());
-                    });
+                        if(payload["status"] == "completed"){
+                            JsonArray arr = dataList["data"].as<JsonArray>();
+                            JsonObject obj= arr.add<JsonObject>();
+                            // JsonObject payloadJson = doc["payload"].as<JsonObject>();
+                            obj["FID"]=payload["FID"];
+                            obj["name"] = name;
+                            obj["usn"] = usn;
+                            Serial.printf("done with registration|%s|%s",name, usn);
+                            Serial.printf("done with registration|%s|%s|%s\n",obj["FID"].as<String>(), obj["name"].as<String>(), obj["usn"].as<String>());
+                            writeMemory();
+                            osState = OS_STATE_IDLE;
+                        } });
                 }else if(type == ""){
 
                 }
