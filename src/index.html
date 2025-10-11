@@ -248,9 +248,21 @@
       function handleWebSocketMessage(message) {
         switch (message.type) {
           case ENUM_MESSAGE_TYPES.REGISTER_PROGRESS:
-            updateLoadingMessage(message.payload.status);
-            if (message.payload.status === CONST_STRINGS.REGISTER_COMPLETED) {
+            updateLoadingMessage(message.payload.message);
+            if (message.payload.status === "completed") {
+              document.getElementById("loadingAnimation").classList.remove(CONST_STRINGS.PAGE_ACTIVE_CLASS);
+              document.getElementById("loadingMessage").textContent = "Waiting for fingerprint...";
+              document.getElementById("usnInput").value = ""; // Clear USN input
+              document.getElementById("nameInput").value = ""; // Clear Name input
               setTimeout(() => showPage("page3"), 1000); // Go to login page after registration
+            } else if (message.payload.status === "failed") {
+              
+              setTimeout(() => {
+                document.getElementById("loadingAnimation").classList.remove(CONST_STRINGS.PAGE_ACTIVE_CLASS);
+              document.getElementById("loadingMessage").textContent = "Waiting for fingerprint...";
+              document.getElementById("usnInput").value = ""; // Clear USN input
+              document.getElementById("nameInput").value = ""; // Clear Name input
+              showPage("page1")}, 3000); // Go back to page1 on failure
             }
             break;
           case ENUM_MESSAGE_TYPES.LOGIN_SUCCESS:
@@ -283,10 +295,10 @@
         // Convert USN to uppercase
         usn = usn.toUpperCase();
 
-        // Regex for name: at least 5, max 25 characters, only letters
-        const nameRegex = /^[a-zA-Z]{5,25}$/;
+        // Regex for name: at least 5, max 25 characters, only letters and spaces
+        const nameRegex = /^[a-zA-Z\s]{5,25}$/;
         if (!nameRegex.test(name)) {
-          alert("Name must be 5-25 characters long and contain only letters.");
+          alert("Name must be 5-25 characters long and contain only letters and spaces.");
           return;
         }
 

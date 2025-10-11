@@ -21,6 +21,7 @@ struct Store
     char data[4000];
 };
 
+
 enum OS_STATE
 {
     OS_STATE_IDLE = 0,
@@ -82,12 +83,16 @@ void AccessOS::initWiFi()
         Serial.print(".");
     }
 
+    Serial.println("WiFi connected.");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
     Serial.print("SSID: " + String(WIFI_SSID) + " Password: " + String(WIFI_PASSWORD));
 }
 
 void AccessOS::clearTemplates()
 {
     uint8_t code = fp.emptyDatabase();
+
     if (code == FINGERPRINT_OK)
     {
         Serial.println("Database cleared");
@@ -98,20 +103,14 @@ void AccessOS::clearTemplates()
     }
 
     // templateStr = "";
-    templateId = -1;
-    for (size_t i = 0; i < sizeof(store.time_counter) / sizeof(store.time_counter[0]); i++)
-    {
-        store.time_counter[i] = 0;
-        store.modelMap[i] = false;
-        strcpy(store.data, "{\"data\":[]}");
-        // store.data = "{\"data\":[]}";
-    }
-    writeMemory();
+    EEPROM.write(0, EEPROM.read(0) + 1);
+    EEPROM.commit();
+    readMemory();
 };
 
 void AccessOS::readMemory()
 {
-    if (EEPROM.read(0) == 108)
+    if (EEPROM.read(0) == 109)
     {
         EEPROM.get(10, store);
         deserializeJson(dataList, store.data);
@@ -124,12 +123,11 @@ void AccessOS::readMemory()
         {
             store.time_counter[i] = 0;
             store.modelMap[i] = false;
-            strcpy(store.data, "{\"data\":[]}");
-            // store.data="{\"data\":[]}";
         }
+        strcpy(store.data, "{\"data\":[]}");
 
         EEPROM.put(10, store);
-        EEPROM.write(0, 108);
+        EEPROM.write(0, 109);
         EEPROM.commit();
         // delay(1000);
     }
@@ -234,18 +232,18 @@ void AccessOS::handle()
     switch (p)
     {
     case FINGERPRINT_OK:
-        Serial.println("Image taken");
+        // Serial.println("Image taken");
         break;
     case FINGERPRINT_NOFINGER:
         return;
     case FINGERPRINT_PACKETRECIEVEERR:
-        Serial.println("Communication error");
+        // Serial.println("Communication error");
         return;
     case FINGERPRINT_IMAGEMESS:
-        Serial.println("Image too messy");
+        // Serial.println("Image too messy");
         return;
     default:
-        Serial.println("Unknown error");
+        // Serial.println("Unknown error");
         return;
     }
 
@@ -254,22 +252,23 @@ void AccessOS::handle()
     switch (p)
     {
     case FINGERPRINT_OK:
-        Serial.println("Image converted");
+        // Serial.println("Image converted");
         break;
     case FINGERPRINT_IMAGEMESS:
-        Serial.println("Image too messy");
+        // Serial.println("Image too messy");
         return;
     case FINGERPRINT_PACKETRECIEVEERR:
-        Serial.println("Communication error");
+        // Serial.println("Communication error");
         return;
     case FINGERPRINT_FEATUREFAIL:
-        Serial.println("Could not find fingerprint features");
+        // Serial.println("Could not find fingerprint features");
         return;
     case FINGERPRINT_INVALIDIMAGE:
-        Serial.println("Could not find fingerprint features");
+        // Serial.println("Could not find fingerprint features");
         return;
     default:
-        Serial.println("Unknown error");
+        // Serial.println("Unknown error");
+        break;
     }
 
     p = fp.fingerFastSearch();
@@ -282,13 +281,13 @@ void AccessOS::handle()
         serializeJson(dataList, test);
         // Serial.printf("test \"%s\"\nUSN:%d\n", test, (unsigned int)arr.size());
 
-        for (int i=0; i<arr.size(); i++)
+        for (int i = 0; i < arr.size(); i++)
         {
             JsonObject obj = arr[i].as<JsonObject>();
 
             if (obj["FID"].as<int>() == fp.fingerID)
             {
-                Serial.printf("Hello \"%s\"\n USN:%s\n", obj["name"].as<String>(), obj["usn"].as<String>());
+                Serial.printf("Hello \"%s\" USN:%s\n", obj["name"].as<String>(), obj["usn"].as<String>());
                 return;
             }
             // Serial.printf("Hello \"%s\"\n USN:%s\n", obj["name"].as<String>(), obj["usn"].as<String>());
@@ -296,17 +295,17 @@ void AccessOS::handle()
     }
     else if (p == FINGERPRINT_PACKETRECIEVEERR)
     {
-        Serial.println("Communication error");
+        // Serial.println("Communication error");
         return;
     }
     else if (p == FINGERPRINT_NOTFOUND)
     {
-        Serial.println("Did not find a match");
+        // Serial.println("Did not find a match");
         return;
     }
     else
     {
-        Serial.println("Unknown error");
+        // Serial.println("Unknown error");
         return;
     }
 }
@@ -323,7 +322,10 @@ void AccessOS::FPdeviceInfo()
 void AccessOS::registerNewID(function<void(String)> _updateFuction = nullptr)
 {
     auto updateFunction = [_updateFuction](int progress = 0, String status = "", String message = "", int templateId = -1)
-    {if(_updateFuction!=nullptr){JsonDocument res; res["progress"] = progress; res["status"] = status;
+    {if(_updateFuction!=nullptr){
+        JsonDocument res;
+            res["progress"] = progress;
+            res["status"] = status;
             res["message"] = message;
             res["FID"] = templateId;
             String data;
@@ -334,7 +336,7 @@ void AccessOS::registerNewID(function<void(String)> _updateFuction = nullptr)
     osState = OS_STATE_REGISTER;
     static bool runLED = true;
     Serial.println("Registering new ID");
-    updateFunction(0, "Registering new ID");
+    updateFunction(0, "progress", "Registering new ID");
 
     // start led blinking event (unchanged)
     timer.set_new_event(0, 200, []()
@@ -359,6 +361,12 @@ void AccessOS::registerNewID(function<void(String)> _updateFuction = nullptr)
         if (failCount > failLimit)
         {
             Serial.println("Failed to register");
+            updateFunction(0, "failed", "Registration time out");
+
+            fp.deleteModel(1);
+            fp.deleteModel(2);
+            fp.deleteModel(3);
+            fp.deleteModel(4);
             return;
         }
         timer.delay(1000);
@@ -374,6 +382,11 @@ void AccessOS::registerNewID(function<void(String)> _updateFuction = nullptr)
             if ((fp.fingerID != 1) && (fp.fingerID != 2) && (fp.fingerID != 3) && (fp.fingerID != 4))
             {
                 Serial.println("Found a print match, not  a new credential, returning to idle");
+                fp.deleteModel(1);
+                fp.deleteModel(2);
+                fp.deleteModel(3);
+                fp.deleteModel(4);
+                updateFunction(0, "failed", "The Fingerprint already exists in DB");
 
                 osState = OS_STATE_IDLE;
                 runLED = false;
@@ -381,7 +394,7 @@ void AccessOS::registerNewID(function<void(String)> _updateFuction = nullptr)
             }
         }
 
-        updateFunction(captureSlot * 25, String((captureSlot + 1) * 25) + "\% completed", "update function test");
+        updateFunction(captureSlot * 25, "progress", String((captureSlot + 1) * 25) + "\% completed");
         if (captureSlot == 1 || captureSlot == 3)
         {
             Serial.println("captures is 1 or 3");
@@ -390,6 +403,12 @@ void AccessOS::registerNewID(function<void(String)> _updateFuction = nullptr)
             if (res != FINGERPRINT_OK)
             {
                 Serial.println("Error creating model");
+                fp.deleteModel(1);
+                fp.deleteModel(2);
+                fp.deleteModel(3);
+                fp.deleteModel(4);
+                updateFunction(0, "progress", "Fingerprints did not match, please try again");
+
                 captureSlot = 0;
                 continue;
             }
@@ -407,6 +426,11 @@ void AccessOS::registerNewID(function<void(String)> _updateFuction = nullptr)
             if (res != FINGERPRINT_OK)
             {
                 Serial.println("Error creating model");
+                updateFunction(0, "progress", "Fingerprints did not match, please try again");
+                fp.deleteModel(1);
+                fp.deleteModel(2);
+                fp.deleteModel(3);
+                fp.deleteModel(4);
                 captureSlot = 0;
                 continue;
             }
@@ -435,7 +459,7 @@ void AccessOS::registerNewID(function<void(String)> _updateFuction = nullptr)
                     fp.deleteModel(3);
                     fp.deleteModel(4);
                     writeMemory();
-                    updateFunction(100, "completed", "update function test", newTemplateId);
+                    updateFunction(100, "completed", "Completed Registration", newTemplateId);
                     newTemplateId = -1;
 
                     osState = OS_STATE_IDLE;
@@ -512,6 +536,31 @@ void AccessOS::initSockets()
                 Serial.println(type);
                 // Serial.println(x);
                 if (type == "REGISTER_FINGERPRINT"){
+                    JsonArray arr = dataList["data"].as<JsonArray>();
+                    JsonObject obj = arr[0].as<JsonObject>();
+                    // Serial.printf("test \"%s\"\nUSN:%d\n", test, (unsigned int)arr.size());
+
+                    for (int i = 0; i < arr.size(); i++)
+                    {
+                        JsonObject obj = arr[i].as<JsonObject>();
+
+                        if (obj["usn"].as<String>() == usn)
+                        {
+                            JsonDocument res,payload;
+                            payload["progress"] = 0;
+                            payload["status"] = "failed";
+                            payload["message"] = "USN already exists";
+                            payload["FID"] = -1;
+                            res["type"] = "REGISTER_PROGRESS";
+                            res["payload"] = payload;
+                            String str;
+                            serializeJson(res, str);
+                            socketServer.sendTXT(num, str.c_str(), str.length());
+
+                            return;
+                        }
+                        // Serial.printf("Hello \"%s\"\n USN:%s\n", obj["name"].as<String>(), obj["usn"].as<String>());
+                    }
                     registerNewID([this,name,usn , num,payloadObj](String data)
                                   {
                         Serial.println(data);
