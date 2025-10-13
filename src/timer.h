@@ -148,16 +148,16 @@ void Timer::delay(unsigned long _delay)
     unsigned long current = millis();
     unsigned long next = millis();
 
-    while (next-current < _delay)
+    do
     {
         next = millis();
         yield();
         // delay(1);
+        timer.run();
         if (loop_function != nullptr)
         {
             loop_function();
         }
-        
-        timer.run();
-    }
+
+    } while (next - current < _delay);
 }

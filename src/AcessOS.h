@@ -7,12 +7,20 @@
 #include <HTTPClient.h>
 #include <vector>
 #include <functional>
+#include <unordered_map>
 #include <ArduinoJson.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 #include "htmlData.h"
 #include "credentials.h"
 #include "timer.h"
 
 #define SOCKET_SERVER_PORT 81
+#define LEFT_BUTTON_PIN 32
+#define UP_BUTTON_PIN 33
+#define RIGHT_BUTTON_PIN 25
+#define DOWN_BUTTON_PIN 26
 
 struct Store
 {
@@ -20,7 +28,6 @@ struct Store
     bool modelMap[64];
     char data[4000];
 };
-
 
 enum OS_STATE
 {
@@ -34,6 +41,8 @@ class AccessOS
 {
 private:
     Adafruit_Fingerprint fp = Adafruit_Fingerprint(&Serial2);
+    Adafruit_SSD1306 oled = Adafruit_SSD1306(128, 64, &Wire);
+
     int templateId = -1;
     Store store;
     JsonDocument dataList;
@@ -49,8 +58,8 @@ private:
     void initWeb();
     void initSockets();
     void initGPIO();
-    void handleButton(int, bool *, int *, int, int);
-    void handleButtons();
+    void initOLED();
+    void handleButton(int, bool *, int *,bool, int, int);
     void handleWebServer();
     void handleWebSockets();
 
@@ -58,10 +67,20 @@ public:
     int osState = OS_STATE_IDLE;
     bool button_0 = false;
     int button_0_press_count = 0;
+    bool button_up = false;
+    int button_up_press_count = 0;
+    bool button_down = false;
+    int button_down_press_count = 0;
+    bool button_left = false;
+    int button_left_press_count = 0;
+    bool button_right = false;
+    int button_right_press_count = 0;
+
     void init();
     void handle();
     void FPdeviceInfo();
     void registerNewID(function<void(String)>);
+    void handleButtons();
     // void registerNewID( function<void(int)> );
     void clearTemplates();
     void clearTemplateData()
@@ -114,7 +133,7 @@ void AccessOS::readMemory()
     {
         EEPROM.get(10, store);
         deserializeJson(dataList, store.data);
-        Serial.println("store data:"+String(store.data));
+        Serial.println("store data:" + String(store.data));
     }
     else
     {
@@ -144,12 +163,51 @@ void AccessOS::writeMemory()
 
 void AccessOS::init()
 {
+    initOLED();
+    static bool initializing = true;
+    timer.set_new_event(0, 500,
+                        [this]()
+                        {
+        static int dotCount = 0;
+        oled.clearDisplay();
+        oled.setTextSize(1);
+        oled.setTextColor(WHITE);
+        oled.setCursor(0, 0);
+        
+        oled.print("Initializing");
+        for (int i = 0; i < dotCount; i++){
+            oled.print(".");
+        }
+        dotCount++;
+        if(dotCount >= 6){
+            dotCount = 0;
+        }
+        oled.println("");
+        oled.display();
+        return initializing; 
+    });
+
+    
     initFP();
     initMemory();
     initWiFi();
     initGPIO();
     initWeb();
     initSockets();
+    initializing = false;
+    timer.delay(2000);
+    oled.clearDisplay();
+    oled.setTextSize(2);
+    oled.setTextColor(BLACK, WHITE);
+    oled.setCursor(5, 30);
+    oled.println(" AccessOS ");
+    oled.display();
+    timer.delay(1000);
+    oled.setCursor(0, 0);
+    oled.setTextColor(WHITE);
+    oled.setTextSize(1);
+    oled.clearDisplay();
+    timer.delay(5000);
 
     // clearTemplates();
 }
@@ -157,7 +215,15 @@ void AccessOS::init()
 void AccessOS::initGPIO()
 {
     pinMode(LED_BUILTIN, OUTPUT);
+    pinMode(UP_BUTTON_PIN, INPUT_PULLUP);
+    pinMode(DOWN_BUTTON_PIN, INPUT_PULLUP);
+    pinMode(LEFT_BUTTON_PIN, INPUT_PULLUP);
+    pinMode(RIGHT_BUTTON_PIN, INPUT_PULLUP);
     pinMode(0, INPUT);
+
+    
+
+    
 }
 
 void AccessOS::initMemory()
@@ -186,41 +252,66 @@ void AccessOS::initFP()
     }
 }
 
-void AccessOS::handleButton(int pin, bool *state, int *counter, int debounceTime = 50, int pressCountDetachTime = 1000)
+void AccessOS::initOLED()
 {
-    bool button_0_state = !digitalRead(pin);
-    unsigned int now = millis();
-    static unsigned int past_0 = millis();
-    static unsigned int press_count_0_past = millis();
-    static int press_count_0 = 0;
 
-    if (button_0_state != (*state))
+    if (!oled.begin(SSD1306_SWITCHCAPVCC, 0x3C))
     {
-        if (now - past_0 > debounceTime)
+        Serial.println(F("SSD1306 allocation failed"));
+    }
+    else
+    {
+        Serial.println(F("SSD1306 allocation success"));
+    }
+}
+
+void AccessOS::handleButton(int pin, bool *state, int *counter,bool flipState = false, int debounceTime = 50, int pressCountDetachTime = 1000)
+{
+    bool button_state = flipState ? digitalRead(pin) : !digitalRead(pin);
+    unsigned int now = millis();
+    static unordered_map<int,unsigned int> past;
+    if(past.find(pin)==past.end())past[pin]=millis();
+    static unordered_map<int, int> press_count;
+    if (press_count.find(pin) == press_count.end())
+        press_count[pin] = 0;
+    static unordered_map<int,unsigned int> press_count_past;
+    if (press_count_past.find(pin) == press_count_past.end())
+        press_count_past[pin] = millis();
+    // static unsigned int past = millis();
+    // static unsigned int press_count_past = millis();
+    // static int press_count = 0;
+
+    if (button_state != (*state))
+    {
+        if (now - past[pin] > debounceTime)
         {
-            past_0 = millis();
+            past[pin] = millis();
             if ((*state) == false)
             {
-                press_count_0++;
-                press_count_0_past = millis();
+                press_count[pin]++;
+                press_count_past[pin] = millis();
             }
-            (*state) = button_0_state;
+            (*state) = button_state;
         }
     }
     else
     {
-        past_0 = millis();
+        past[pin] = millis();
     }
-    if (millis() - press_count_0_past > pressCountDetachTime)
+    if (millis() - press_count_past[pin] > pressCountDetachTime)
     {
-        (*counter) = press_count_0;
-        press_count_0 = 0;
+        (*counter) = press_count[pin];
+        press_count[pin] = 0;
     }
 };
 
 void AccessOS::handleButtons()
 {
-    handleButton(0, &accessOS.button_0, &accessOS.button_0_press_count);
+    // handleButton(0, &button_0, &button_0_press_count);
+    handleButton(UP_BUTTON_PIN, &button_up, &button_up_press_count);
+    handleButton(DOWN_BUTTON_PIN, &button_down, &button_down_press_count);
+    handleButton(LEFT_BUTTON_PIN, &button_left, &button_left_press_count);
+    handleButton(RIGHT_BUTTON_PIN, &button_right, &button_right_press_count);
 }
 
 void AccessOS::handle()
